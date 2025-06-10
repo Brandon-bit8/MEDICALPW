@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0">
+  <title>Gestión de Usuarios - MediRecord Pro</title>
+  <link rel="stylesheet"
+        href="../../assets/css/style.css">
+  <link rel="stylesheet"
+        href="../../assets/css/dashboard.css">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../../assets/js/supabase-config.js"></script>
+  <script src="../../assets/js/auth.js"></script>
+</head>
+
+<body>
+  <div class="dashboard-container">
+    <aside class="sidebar"
+           id="sidebar">
+      <div class="sidebar-header"><button class="toggle-sidebar"
+                onclick="toggleSidebar()">☰</button>
+        <h2>MediRecord Pro</h2>
+      </div>
+      <nav class="nav-menu">
+        <a href="../dashboard/admin.html"
+           class="nav-item"><i class="fas fa-home"></i><span>Dashboard</span></a>
+        <a href="index.html"
+           class="nav-item active"><i class="fas fa-users"></i><span>Usuarios</span></a>
+        <a href="../reports/index.html"
+           class="nav-item"><i class="fas fa-chart-bar"></i><span>Reportes</span></a>
+        <a href="../settings/index.html"
+           class="nav-item"><i class="fas fa-cog"></i><span>Configuración</span></a>
+      </nav>
+    </aside>
+
+    <div class="main-content"
+         id="mainContent">
+      <header class="dashboard-header">
+        <div class="user-menu"
+             style="margin-left: auto;">
+          <div class="user-profile"
+               onclick="toggleUserMenu()">
+            <div class="initials-avatar"
+                 id="userInitials"></div><span id="userName"></span>
+          </div>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <div class="page-header">
+          <h1>Gestión de Usuarios y Pacientes</h1>
+        </div>
+
+        <div class="table-container">
+          <table class="dashboard-table">
+            <thead>
+              <tr>
+                <th>Nombre del Paciente</th>
+                <th>Doctor Asignado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="patientsTableBody"></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="manageDoctorModal"
+       class="modal">
+    <div class="modal-content">
+      <span class="close-button"
+            onclick="closeModal()">&times;</span>
+      <h2>Gestionar Doctor</h2>
+      <p>Paciente: <strong id="modalPatientName"></strong></p>
+      <p>Doctor Actual: <strong id="modalCurrentDoctor"></strong></p>
+      <form id="manageDoctorForm"
+            class="auth-form"
+            style="margin-top: 1rem;">
+        <input type="hidden"
+               id="modalPatientId">
+        <div class="form-group">
+          <label for="doctorSelect">Asignar Nuevo Doctor</label>
+          <select id="doctorSelect"
+                  name="doctorId"></select>
+        </div>
+        <div id="modalMessageContainer"
+             class="message-container"></div>
+        <div class="actions-grid"
+             style="grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <button type="submit"
+                  class="btn btn-primary btn-block">Guardar Cambio</button>
+          <button type="button"
+                  id="unassignDoctorButton"
+                  class="btn btn-danger btn-block">Quitar Asignación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let currentUser;
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.href = authManager.getProjectRoot() + 'pages/auth/login.html'; return; }
+      currentUser = user;
+
+      await loadAdminProfile(user);
+      await loadAllPatients();
+    });
+
+    async function loadAdminProfile(user) {
+      const { data: profile } = await supabase.from('users').select('full_name').eq('id', user.id).single();
+      const fullName = profile?.full_name || 'Admin';
+      document.getElementById('userName').textContent = fullName;
+      document.getElementById('userInitials').textContent = fullName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+    }
+
+    async function loadAllPatients() {
+      const tableBody = document.getElementById('patientsTableBody');
+      tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Cargando...</td></tr>';
+      try {
+        // Consulta avanzada para obtener el nombre del paciente y el nombre del doctor asignado
+        const { data, error } = await supabase
+          .from('patients')
+          .select(`
+                        id,
+                        users!patients_user_id_fkey(full_name),
+                        doctor:primary_doctor_id(id, full_name)
+                    `);
+        if (error) throw error;
+        renderPatientsTable(data);
+      } catch (error) {
+        tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Error al cargar pacientes.</td></tr>';
+        console.error(error);
+      }
+    }
+
+    function renderPatientsTable(patients) {
+      const tableBody = document.getElementById('patientsTableBody');
+      if (!patients || patients.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No hay pacientes en el sistema.</td></tr>';
+        return;
+      }
+      tableBody.innerHTML = patients.map(p => {
+        const patientName = p.users?.full_name || 'N/A';
+        const doctorName = p.doctor?.full_name || 'Sin Asignar';
+        // Usamos JSON.stringify para pasar el objeto del doctor de forma segura
+        return `
+                    <tr>
+                        <td>${patientName}</td>
+                        <td>${doctorName}</td>
+                        <td class="actions-cell">
+                            <button class="btn btn-sm btn-secondary" onclick='openManageModal(${JSON.stringify(p)})'>Gestionar</button>
+                        </td>
+                    </tr>
+                `;
+      }).join('');
+    }
+
+    async function openManageModal(patient) {
+      document.getElementById('modalPatientId').value = patient.id;
+      document.getElementById('modalPatientName').textContent = patient.users.full_name;
+      document.getElementById('modalCurrentDoctor').textContent = patient.doctor?.full_name || 'Ninguno';
+
+      // Poblar el dropdown de doctores
+      const doctorSelect = document.getElementById('doctorSelect');
+      doctorSelect.innerHTML = '<option value="">Cargando doctores...</option>';
+      const { data: doctors, error } = await supabase.from('users').select('id, full_name').eq('role', 'doctor');
+      if (error) {
+        doctorSelect.innerHTML = '<option value="">Error al cargar</option>';
+      } else {
+        doctorSelect.innerHTML = doctors.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
+        // Pre-seleccionar el doctor actual si existe
+        if (patient.doctor) {
+          doctorSelect.value = patient.doctor.id;
+        }
+      }
+
+      document.getElementById('manageDoctorModal').style.display = 'block';
+    }
+
+    function closeModal() {
+      document.getElementById('manageDoctorModal').style.display = 'none';
+    }
+
+    document.getElementById('manageDoctorForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const patientId = document.getElementById('modalPatientId').value;
+      const newDoctorId = document.getElementById('doctorSelect').value;
+
+      const { error } = await supabase.from('patients').update({ primary_doctor_id: newDoctorId }).eq('id', patientId);
+
+      if (error) {
+        showMessage('modalMessageContainer', `Error: ${error.message}`);
+      } else {
+        showMessage('modalMessageContainer', 'Doctor reasignado con éxito.', 'success');
+        await loadAllPatients();
+        setTimeout(closeModal, 1500);
+      }
+    });
+
+    document.getElementById('unassignDoctorButton').addEventListener('click', async () => {
+      if (!confirm('¿Estás seguro de que quieres quitar la asignación de este doctor?')) return;
+      const patientId = document.getElementById('modalPatientId').value;
+
+      const { error } = await supabase.from('patients').update({ primary_doctor_id: null }).eq('id', patientId);
+
+      if (error) {
+        showMessage('modalMessageContainer', `Error: ${error.message}`);
+      } else {
+        showMessage('modalMessageContainer', 'Asignación quitada con éxito.', 'success');
+        await loadAllPatients();
+        setTimeout(closeModal, 1500);
+      }
+    });
+
+    // Funciones de UI
+    function toggleSidebar() { /* ... */ }
+    let userMenuVisible = false;
+    function toggleUserMenu() { /* ... */ }
+    async function handleLogout() { /* ... */ }
+  </script>
+
+  <style>
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1001;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-content {
+      background-color: #fefefe;
+      margin: 10% auto;
+      padding: 2rem;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 600px;
+      position: relative;
+    }
+
+    .close-button {
+      color: #aaa;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+  </style>
+</body>
+
+</html>
